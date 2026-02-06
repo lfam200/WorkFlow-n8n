@@ -151,17 +151,17 @@ flowchart TB
     GEN_EETT --> REVIEW_DOC
     
     REVIEW_DOC -->|Sí| FIX_OBS[Corregir Observaciones]
-    FIX_OBS --> VALIDATE_OBS{¿Se aceptan<br/>correcciones?}
+    FIX_OBS --> COUNT_OBS{¿Intentos < 2?}
+    COUNT_OBS -->|Sí| VALIDATE_OBS{¿Se aceptan<br/>correcciones?}
+    COUNT_OBS -->|No, 2 intentos| AUTO_APPROVE[Aprobar Automáticamente]
     VALIDATE_OBS -->|No| FIX_OBS
     VALIDATE_OBS -->|Sí| ELABORATE_REQ
+    AUTO_APPROVE --> ELABORATE_REQ
     REVIEW_DOC -->|No| ELABORATE_REQ[Elaborar Requerimiento]
     
-    ELABORATE_REQ --> CHECK_SERVICE{¿Es Servicio<br/>o Locación?}
-    CHECK_SERVICE -->|Sí| READ_EMAIL[Leer Correo]
-    CHECK_SERVICE -->|No| ASSIGN
-    READ_EMAIL --> ASSIGN
+    ELABORATE_REQ --> ASSIGN[Asignar Responsable<br/>Automáticamente]
     
-    ASSIGN[Asignar Responsable<br/>Automáticamente] --> NOTIFY_RESP[Notificar al<br/>Responsable]
+    ASSIGN --> NOTIFY_RESP[Notificar al<br/>Responsable]
     
     NOTIFY_RESP --> VALIDATE_REQ{¿Requerimiento<br/>Conforme?}
     VALIDATE_REQ -->|No| SEND_OBS_REQ[Enviar Solicitud<br/>de Subsanación]
@@ -171,8 +171,13 @@ flowchart TB
     CHECK_AMOUNT -->|Sí| SELECT_1[Seleccionar<br/>1 Proveedor]
     CHECK_AMOUNT -->|No| SELECT_2[Seleccionar<br/>≥2 Proveedores]
     
-    SELECT_1 --> SEND_PROV[Enviar a<br/>Proveedores]
-    SELECT_2 --> SEND_PROV
+    SELECT_1 --> VERIFY_EMAILS{Verificar Correos<br/>de Proveedores}
+    SELECT_2 --> VERIFY_EMAILS
+    
+    VERIFY_EMAILS -->|Válidos| SEND_PROV[Enviar a<br/>Proveedores]
+    VERIFY_EMAILS -->|Inválidos| NOTIFY_INVALID[Notificar Correos<br/>Inválidos]
+    NOTIFY_INVALID --> FIX_EMAILS[Corregir Correos]
+    FIX_EMAILS --> VERIFY_EMAILS
     
     SEND_PROV --> PROV_REVIEW[Proveedor Revisa<br/>Requerimiento]
     PROV_REVIEW --> PROV_DOWNLOAD[Descarga Formatos]
@@ -203,44 +208,74 @@ sequenceDiagram
     participant SES as Amazon SES
     participant PROV as Proveedor
     
-    AU->>N8N: Envía formulario de requerimiento
-    N8N->>N8N: Valida monto ≤ 8 UIT
-    N8N->>AT: Crea registro de requerimiento
-    N8N->>N8N: Genera documento TDR/EETT
-    N8N->>AT: Guarda documento
-    N8N->>SES: Solicita revisión
-    SES->>AU: Notificación de revisión
+    rect rgb(240, 248, 255)
+        Note over AU,AT: Fase 1: Inicio del Requerimiento
+        AU->>N8N: Envía formulario (tipo + monto)
+        N8N->>N8N: Valida monto ≤ 8 UIT (S/ 44,000)
+        N8N->>AT: Crea registro de requerimiento
+        N8N->>N8N: Genera documento TDR/EETT
+        N8N->>AT: Guarda documento
+        N8N->>SES: Solicita revisión
+        SES->>AU: Notificación de revisión
+    end
     
-    AU->>N8N: Aprueba documento
-    N8N->>N8N: Calcula asignación (balance de líneas)
-    N8N->>AT: Asigna responsable
-    N8N->>AT: Incrementa carga de trabajo
-    N8N->>SES: Notifica asignación
-    SES->>AB: Notificación de nuevo requerimiento
+    rect rgb(255, 250, 240)
+        Note over AU,AB: Fase 2: Revisión y Asignación
+        AU->>N8N: Aprueba documento
+        Note right of AU: Máx 2 ciclos de<br/>observaciones
+        N8N->>N8N: Calcula asignación (balance de líneas)
+        N8N->>AT: Asigna responsable
+        N8N->>AT: Incrementa carga de trabajo
+        N8N->>SES: Notifica asignación
+        SES->>AB: Notificación de nuevo requerimiento
+    end
     
-    AB->>N8N: Valida requerimiento
-    N8N->>AT: Obtiene proveedores del rubro
-    N8N->>AT: Crea registros de cotización
-    N8N->>SES: Envía invitación a cotizar
-    SES->>PROV: Correo con link y documentos
+    rect rgb(240, 255, 240)
+        Note over AB,PROV: Fase 3: Validación y Envío a Proveedores
+        AB->>N8N: Valida requerimiento (timeout 2 días)
+        N8N->>AT: Obtiene proveedores del requerimiento
+        Note right of N8N: Proveedores indicados<br/>por el Área Usuaria
+        
+        alt Abastecimiento agrega más proveedores
+            AB->>N8N: Agrega proveedores adicionales
+            N8N->>AT: Actualiza lista de proveedores
+        end
+        
+        N8N->>N8N: Verifica existencia de correos
+        alt Correos inválidos
+            N8N->>SES: Notifica correos inválidos
+            SES->>AB: Solicita corrección de correos
+            AB->>N8N: Corrige correos
+        end
+        
+        N8N->>AT: Crea registros de cotización
+        N8N->>SES: Envía invitación a cotizar
+        SES->>PROV: Correo con link y documentos
+    end
     
-    PROV->>N8N: Accede al formulario de propuesta
-    PROV->>N8N: Sube documentos requeridos
-    N8N->>AT: Guarda documentos
-    N8N->>SES: Notifica recepción
-    SES->>AB: Notificación de propuesta recibida
+    rect rgb(255, 240, 245)
+        Note over PROV,AB: Fase 4: Recepción de Propuestas
+        PROV->>N8N: Accede al formulario de propuesta
+        PROV->>N8N: Sube documentos requeridos
+        N8N->>AT: Guarda documentos
+        N8N->>SES: Notifica recepción
+        SES->>AB: Notificación de propuesta recibida
+    end
     
-    AB->>N8N: Valida propuesta
-    alt Propuesta Conforme
-        N8N->>AT: Actualiza estado a Conforme
-        N8N->>SES: Envía aceptación
-        SES->>AU: Correo de aceptación
-        SES->>PROV: Correo de aceptación
-    else Propuesta con Observaciones
-        N8N->>AT: Registra observaciones
-        N8N->>SES: Envía observaciones
-        SES->>PROV: Correo con observaciones
-        PROV->>N8N: Subsana observaciones
+    rect rgb(245, 245, 255)
+        Note over AB,PROV: Fase 5: Validación y Cierre
+        AB->>N8N: Valida propuesta
+        alt Propuesta Conforme
+            N8N->>AT: Actualiza estado a Conforme
+            N8N->>SES: Envía aceptación
+            SES->>AU: Correo de aceptación
+            SES->>PROV: Correo de aceptación
+        else Propuesta con Observaciones
+            N8N->>AT: Registra observaciones
+            N8N->>SES: Envía observaciones
+            SES->>PROV: Correo con observaciones (recordatorio cada 1 día)
+            PROV->>N8N: Subsana observaciones
+        end
     end
 ```
 
@@ -340,8 +375,12 @@ graph TB
 erDiagram
     REQUERIMIENTOS ||--o{ COTIZACIONES : tiene
     REQUERIMIENTOS ||--o{ HISTORIAL_OBSERVACIONES : tiene
+    REQUERIMIENTOS ||--o{ PROVEEDORES_REQUERIMIENTO : tiene
     REQUERIMIENTOS }o--|| PERSONAL_ABASTECIMIENTO : asignado_a
     REQUERIMIENTOS }o--|| AREAS : pertenece_a
+    
+    PROVEEDORES_REQUERIMIENTO }o--|| PROVEEDORES : referencia
+    PROVEEDORES_REQUERIMIENTO }o--|| REQUERIMIENTOS : pertenece_a
     
     COTIZACIONES ||--o{ DOCUMENTOS_PROVEEDOR : contiene
     COTIZACIONES }o--|| PROVEEDORES : de
@@ -364,6 +403,16 @@ erDiagram
         attachment documento_tdr_eett
         text observaciones
         string codigo_interno
+    }
+    
+    PROVEEDORES_REQUERIMIENTO {
+        int id PK
+        int id_requerimiento FK
+        int id_proveedor FK
+        string origen
+        string estado
+        date fecha_agregado
+        string agregado_por
     }
     
     PERSONAL_ABASTECIMIENTO {
@@ -457,17 +506,54 @@ erDiagram
 | `id_requerimiento` | Autonumber | Identificador único | 1001 |
 | `codigo_interno` | Formula | Código legible | REQ-2025-0001 |
 | `tipo` | Single Select | Servicio / Bienes / Locación | Servicio |
-| `descripcion` | Long Text | Descripción del requerimiento | Servicio de limpieza... |
 | `monto_estimado` | Currency | Monto en soles | S/ 15,000.00 |
 | `es_menor_1uit` | Formula | `IF(monto_estimado < 5150, TRUE, FALSE)` | FALSE |
 | `estado` | Single Select | Estado actual | En Cotización |
 | `area_solicitante` | Link | Relación a Áreas | Recursos Humanos |
 | `responsable_asignado` | Link | Relación a Personal | Juan Pérez |
-| `fecha_creacion` | Created Time | Automático | 2025-01-15 10:30 |
-| `fecha_limite` | Date | Fecha límite de proceso | 2025-01-30 |
+| `fecha_hora_creacion` | Created Time | Fecha y hora automático | 15/01/2025 10:30:45 |
+| `fecha_limite` | Date | Solo fecha límite de proceso | 30/01/2025 |
 | `documento_tdr_eett` | Attachment | Documento generado | TDR_REQ-2025-0001.docx |
-| `justificacion` | Long Text | Justificación de la contratación | Se requiere para... |
 | `observaciones` | Long Text | Observaciones generales | - |
+| `intentos_correccion` | Number | Contador de correcciones (máx 2) | 0 |
+
+**Campos específicos del TDR/EETT (se muestran según tipo):**
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `organo_unidad_organica` | Text | Órgano y/o Unidad Orgánica |
+| `actividad_poi_pei` | Text | Actividad del POI / Acción Estratégica PEI |
+| `denominacion_contratacion` | Text | Denominación de la contratación |
+| `finalidad_publica` | Long Text | Interés público a satisfacer |
+| `antecedentes` | Long Text | Antecedentes de la necesidad |
+| `objetivo_general` | Long Text | Objetivo general de la contratación |
+| `objetivo_especifico` | Long Text | Objetivos específicos |
+| `alcance_descripcion` | Long Text | Alcance y descripción del servicio/bien |
+| `actividades` | Long Text | Actividades a desarrollar (Servicios) |
+| `procedimiento` | Long Text | Procedimiento a seguir (Servicios) |
+| `plan_trabajo` | Long Text | Plan de trabajo (Servicios) |
+| `recursos_proveedor` | Long Text | Recursos del proveedor |
+| `caracteristicas_tecnicas` | Long Text | Características técnicas (Bienes) |
+| `condiciones_operacion` | Long Text | Condiciones de operación (Bienes) |
+| `embalaje_rotulado` | Long Text | Embalaje y rotulado (Bienes) |
+| `reglamentos_tecnicos` | Long Text | Reglamentos técnicos, normas metrológicas |
+| `normas_tecnicas` | Long Text | Normas técnicas aplicables |
+| `seguros` | Long Text | Seguros requeridos |
+| `prestaciones_accesorias` | Long Text | Prestaciones accesorias |
+| `requisitos_proveedor` | Long Text | Requisitos del proveedor y/o personal |
+| `lugar_ejecucion` | Text | Lugar de ejecución/entrega |
+| `plazo_ejecucion` | Text | Plazo de ejecución en días calendario |
+| `resultados_entregables` | Long Text | Resultados esperados y entregables |
+| `conformidad` | Long Text | Procedimiento de conformidad |
+| `forma_pago` | Long Text | Forma y condiciones de pago |
+| `garantia_comercial` | Long Text | Garantía comercial (Bienes) |
+| `vicios_ocultos` | Long Text | Responsabilidad por vicios ocultos |
+| `confidencialidad` | Long Text | Cláusula de confidencialidad |
+| `penalidad_mora` | Long Text | Penalidad por mora |
+| `otras_penalidades` | Long Text | Otras penalidades |
+| `solucion_controversias` | Long Text | Cláusula de solución de controversias |
+| `clausula_anticorrupcion` | Long Text | Cláusula anticorrupción y antisoborno |
+| `resolucion_contrato` | Long Text | Condiciones de resolución de contrato |
 
 **Estados posibles:**
 - `Borrador` - Recién creado
@@ -481,6 +567,34 @@ erDiagram
 - `En Evaluación` - Evaluando propuestas
 - `Adjudicado` - Proceso completado
 - `Cancelado` - Proceso cancelado
+
+#### Tabla: `Proveedores_Requerimiento`
+
+Esta tabla relaciona los proveedores indicados por el área usuaria (o agregados por Abastecimiento) con cada requerimiento.
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `id` | Autonumber | ID único |
+| `requerimiento` | Link | Relación a Requerimientos |
+| `proveedor` | Link | Relación a Proveedores |
+| `origen` | Single Select | Quién agregó al proveedor |
+| `estado` | Single Select | Estado del proveedor en el proceso |
+| `fecha_agregado` | Created Time | Fecha de registro |
+| `agregado_por` | Text | Nombre/email de quien agregó |
+| `notas` | Long Text | Notas adicionales |
+
+**Valores de `origen`:**
+- `Área Usuaria - BD` - Seleccionado de la base de datos por el área
+- `Área Usuaria - Nuevo` - Proveedor nuevo agregado por el área
+- `Abastecimiento - BD` - Agregado por Abastecimiento de la BD
+- `Abastecimiento - Nuevo` - Proveedor nuevo agregado por Abastecimiento
+
+**Estados del proveedor en el requerimiento:**
+- `Pendiente` - Aún no se envía invitación
+- `Invitado` - Se envió correo de invitación
+- `Participando` - Proveedor accedió al formulario
+- `Propuesta Recibida` - Envió su propuesta
+- `Descartado` - No participará (por decisión propia o del proceso)
 
 #### Tabla: `Personal_Abastecimiento`
 
@@ -643,11 +757,11 @@ graph TB
 
 ### 5.2 WF-01: Inicio de Requerimiento
 
-**Trigger:** n8n Form - Formulario público
+**Trigger:** n8n Form - Formulario público (solo 2 campos iniciales)
 
 ```mermaid
 flowchart TD
-    A[Trigger: n8n Form<br/>Nuevo Requerimiento] --> B{Validar<br/>Monto ≤ 8 UIT}
+    A[Trigger: n8n Form<br/>Tipo + Monto Estimado] --> B{Validar<br/>Monto ≤ 8 UIT<br/>S/ 44,000}
     
     B -->|No| C[Enviar Correo<br/>de Rechazo]
     C --> D((Fin))
@@ -668,10 +782,10 @@ flowchart TD
 **Nodos del workflow:**
 
 1. **n8n Form Trigger**
-   - Campos: tipo, descripción, monto_estimado, área, justificación, fecha_limite
+   - Campos iniciales: tipo, monto_estimado (solo estos 2 campos)
    
 2. **IF - Validar Monto**
-   - Condición: `monto_estimado <= 51500` (8 UIT 2025)
+   - Condición: `monto_estimado <= 44000` (8 UIT 2025)
    
 3. **AirTable - Crear Registro**
    - Base: Contrataciones
@@ -692,25 +806,53 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[Trigger: Webhook<br/>Datos del Requerimiento] --> B[Obtener Plantilla TDR<br/>desde Google Drive]
+    A[Trigger: Webhook<br/>Datos del Requerimiento] --> B[Mostrar Formulario<br/>Completo TDR]
     
-    B --> C[Reemplazar Variables<br/>en Plantilla]
-    C --> D[Convertir a PDF<br/>para Vista Previa]
-    D --> E[Subir a S3]
-    E --> F[Actualizar AirTable<br/>con Link del Documento]
-    F --> G[Enviar Correo<br/>Solicitud de Revisión]
-    G --> H((Fin))
-    
-    subgraph "Variables a Reemplazar"
-        V1["{{codigo_requerimiento}}"]
-        V2["{{descripcion_servicio}}"]
-        V3["{{area_usuaria}}"]
-        V4["{{monto_estimado}}"]
-        V5["{{fecha_limite}}"]
-        V6["{{justificacion}}"]
-        V7["{{requisitos_minimos}}"]
-    end
+    B --> C[Área Usuaria<br/>Completa Campos]
+    C --> D[Validar Campos<br/>Obligatorios]
+    D --> E[Obtener Plantilla TDR<br/>desde Google Drive]
+    E --> F[Reemplazar Variables<br/>en Plantilla]
+    F --> G[Convertir a PDF<br/>para Vista Previa]
+    G --> H[Subir a S3]
+    H --> I[Actualizar AirTable<br/>con Link del Documento]
+    I --> J[Enviar Correo<br/>Solicitud de Revisión]
+    J --> K((Fin))
 ```
+
+**Campos del Formulario TDR (Servicios y Locación):**
+
+Los campos en **rojo** son fijos (no editables), los **amarillos** son predefinidos pero editables, y los **morados** son selección múltiple.
+
+| Sección | Campo | Tipo |
+|---------|-------|------|
+| Encabezado | Órgano y/o Unidad Orgánica | Editable |
+| Encabezado | Actividad del POI / Acción Estratégica PEI | Editable |
+| Encabezado | Denominación de la contratación | Editable |
+| 1 | Finalidad Pública | Long Text |
+| 2 | Antecedentes | Long Text |
+| 3.1 | Objetivo General | Long Text |
+| 3.2 | Objetivo Específico | Long Text |
+| 4.1 | Actividades | Long Text |
+| 4.2 | Procedimiento | Long Text |
+| 4.3 | Plan de trabajo | Long Text |
+| 4.4 | Recursos a ser provistos por el proveedor | Long Text |
+| 4.5 | Reglamentos técnicos, normas metrológicas y/o sanitarias | Long Text |
+| 4.6 | Normas técnicas | Long Text |
+| 4.7 | Seguros | Long Text |
+| 4.8 | Prestaciones accesorias | Long Text |
+| 5 | Requisitos del Proveedor y/o Personal | Long Text |
+| 6 | Seguros (de corresponder) | Long Text |
+| 7 | Lugar y Plazo de Ejecución | Text + Number |
+| 8 | Resultados Esperados-Entregables | Long Text |
+| 9 | Conformidad | Long Text |
+| 10 | Forma y Condiciones de Pago | Long Text |
+| 11 | Responsabilidad por Vicios Ocultos | Fijo (no editable) |
+| 12 | Confidencialidad | Long Text |
+| 13 | Penalidades (Mora) | Fijo (fórmula predefinida) |
+| 14 | Otras Penalidades | Long Text |
+| 15 | Cláusulas de Solución de Controversias | Fijo (no editable) |
+| 16 | Cláusula Anticorrupción y antisoborno | Fijo (no editable) |
+| 17 | Resolución de contrato | Fijo (no editable) |
 
 **Nodos del workflow:**
 
@@ -718,23 +860,28 @@ flowchart TD
    - Método: POST
    - Path: /generar-tdr
    
-2. **Google Drive - Copiar Plantilla**
+2. **n8n Form - Formulario TDR Completo**
+   - Muestra todos los campos según la estructura oficial
+   - Campos fijos vienen prellenados
+   
+3. **Google Drive - Copiar Plantilla**
    - Copiar plantilla base a nueva carpeta
    
-3. **Google Docs - Reemplazar Texto**
-   - Buscar y reemplazar variables
+4. **Google Docs - Reemplazar Texto**
+   - Buscar y reemplazar todas las variables
    
-4. **Google Drive - Exportar PDF**
+5. **Google Drive - Exportar PDF**
    - Para vista previa
    
-5. **AWS S3 - Upload**
+6. **AWS S3 - Upload**
    - Subir ambos archivos (DOCX y PDF)
    
-6. **AirTable - Update**
+7. **AirTable - Update**
    - Actualizar campo documento_tdr_eett
+   - Guardar todos los campos del formulario
    - Cambiar estado a "Pendiente Revisión"
    
-7. **Send Email**
+8. **Send Email**
    - Destinatario: área solicitante
    - Template: solicitud_revision_tdr
 
@@ -744,24 +891,52 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[Trigger: Webhook<br/>Datos del Requerimiento] --> B[Obtener Plantilla EETT<br/>desde Google Drive]
+    A[Trigger: Webhook<br/>Datos del Requerimiento] --> B[Mostrar Formulario<br/>Completo EETT]
     
-    B --> C[Reemplazar Variables<br/>en Plantilla]
-    C --> D[Convertir a PDF]
-    D --> E[Subir a S3]
-    E --> F[Actualizar AirTable]
-    F --> G[Enviar Correo<br/>Solicitud de Revisión]
-    G --> H((Fin))
-    
-    subgraph "Variables EETT"
-        V1["{{codigo_requerimiento}}"]
-        V2["{{descripcion_bien}}"]
-        V3["{{especificaciones}}"]
-        V4["{{cantidad}}"]
-        V5["{{unidad_medida}}"]
-        V6["{{monto_estimado}}"]
-    end
+    B --> C[Área Usuaria<br/>Completa Campos]
+    C --> D[Validar Campos<br/>Obligatorios]
+    D --> E[Obtener Plantilla EETT<br/>desde Google Drive]
+    E --> F[Reemplazar Variables<br/>en Plantilla]
+    F --> G[Convertir a PDF]
+    G --> H[Subir a S3]
+    H --> I[Actualizar AirTable]
+    I --> J[Enviar Correo<br/>Solicitud de Revisión]
+    J --> K((Fin))
 ```
+
+**Campos del Formulario EETT (Bienes):**
+
+| Sección | Campo | Tipo |
+|---------|-------|------|
+| Encabezado | Órgano y/o Unidad Orgánica | Editable |
+| Encabezado | Actividad del POI / Acción Estratégica PEI | Editable |
+| Encabezado | Denominación de la Contratación | Editable |
+| 1 | Finalidad Pública | Long Text |
+| 2 | Antecedentes | Long Text |
+| 3.1 | Objetivo General | Long Text |
+| 3.2 | Objetivo Específico | Long Text |
+| 4.1 | Características técnicas | Long Text |
+| 4.2 | Condiciones de Operación | Long Text |
+| 4.3 | Embalaje y rotulado | Long Text |
+| 4.4 | Reglamentos Técnicos, Normas Metrológicas y/o sanitarias | Long Text |
+| 4.5 | Normas Técnicas | Long Text |
+| 4.6 | Acondicionamiento y Montaje | Long Text |
+| 4.7 | Sistemas de entrega y/o modalidades de pago | Long Text |
+| 4.8 | Disponibilidad de Servicios y Repuestos | Long Text |
+| 5 | Garantía Comercial | Long Text |
+| 6 | Muestras | Long Text |
+| 7 | Prestaciones Accesorias | Long Text |
+| 8 | Requisitos del Proveedor y/o Personal | Long Text |
+| 9 | Lugar y Plazo de Ejecución | Text + Number |
+| 10 | Conformidad | Long Text |
+| 11 | Forma y Condiciones de Pago | Long Text |
+| 12 | Responsabilidad por Vicios Ocultos | Fijo (no editable) |
+| 13 | Penalidades (Mora) | Fijo (fórmula predefinida, F=0.40 para bienes) |
+| 14 | Otras Penalidades | Long Text |
+| 15 | Responsabilidad por Vicios Ocultos | Fijo (no editable) |
+| 16 | Cláusula de Solución de Controversias | Fijo (no editable) |
+| 17 | Cláusula Anticorrupción y antisoborno | Fijo (no editable) |
+| 18 | Resolución de contrato | Fijo (no editable) |
 
 ### 5.5 WF-04: Flujo de Observaciones
 
@@ -771,18 +946,34 @@ flowchart TD
 flowchart TD
     A[Trigger: Webhook<br/>Nueva Observación] --> B[Registrar en<br/>Historial_Observaciones]
     
-    B --> C[Actualizar Estado<br/>Requerimiento a Observado]
-    C --> D[Enviar Correo<br/>al Área Usuaria]
-    D --> E[Esperar Respuesta<br/>via Form]
-    E --> F{¿Subsanación<br/>Recibida?}
+    B --> C[Incrementar Contador<br/>de Intentos]
+    C --> D{¿Intentos > 2?}
     
-    F -->|Sí| G[Actualizar<br/>Documento]
-    G --> H[Notificar para<br/>Nueva Revisión]
-    H --> I((Fin - Continúa<br/>en WF-05))
+    D -->|Sí| E[Aprobar Automáticamente]
+    E --> F[Trigger WF-06<br/>Asignación]
+    F --> G((Fin))
     
-    F -->|Timeout 3 días| J[Enviar<br/>Recordatorio]
-    J --> E
+    D -->|No| H[Actualizar Estado<br/>a Observado]
+    H --> I[Enviar Correo<br/>al Área Usuaria]
+    I --> J[Esperar Respuesta<br/>via Form]
+    
+    J --> K{¿Subsanación<br/>Recibida?}
+    
+    K -->|Sí| L[Actualizar<br/>Documento]
+    L --> M[Notificar para<br/>Nueva Revisión]
+    M --> N((Fin - Continúa<br/>en WF-05))
+    
+    K -->|Timeout 1 día| O[Enviar<br/>Recordatorio Diario]
+    O --> P{¿Requerimiento<br/>Cancelado?}
+    P -->|No| J
+    P -->|Sí| Q[Actualizar Estado<br/>a Cancelado]
+    Q --> R((Fin - Cancelado))
 ```
+
+**Reglas de negocio:**
+- Timeout de **1 día** para recordatorios
+- Recordatorio **diario** hasta que se subsane o se cancele
+- Máximo **2 ciclos** de observaciones, al tercero se aprueba automáticamente
 
 **Nodos:**
 
@@ -794,15 +985,21 @@ flowchart TD
 3. **AirTable - Update**
    - Tabla: Requerimientos
    - Estado: "Observado"
+   - Incrementar campo `intentos_correccion`
    
-4. **Send Email**
+4. **IF - Verificar Intentos**
+   - Condición: `intentos_correccion > 2`
+   - Si es verdadero: Aprobar automáticamente
+   
+5. **Send Email**
    - Template: observaciones_requerimiento
    - Incluir link a formulario de subsanación
 
-5. **Wait**
-   - Esperar respuesta o timeout
+6. **Wait**
+   - Timeout: 1 día
+   - Repetir hasta subsanación o cancelación
 
-6. **n8n Form** (subworkflow)
+7. **n8n Form** (subworkflow)
    - Formulario de subsanación
 
 ### 5.6 WF-05: Aprobación de Documento
@@ -817,16 +1014,29 @@ flowchart TD
     C --> D[Trigger WF-06<br/>Asignación]
     D --> E((Fin))
     
-    B -->|No| F[Registrar<br/>Observaciones]
-    F --> G[Trigger WF-04<br/>Flujo Observaciones]
-    G --> H((Fin))
+    B -->|No| F[Incrementar Contador<br/>Ciclos Sugerencias]
+    F --> G{¿Ciclos > 2?}
+    G -->|Sí| H[Aprobar<br/>Automáticamente]
+    H --> C
+    G -->|No| I[Registrar<br/>Observaciones]
+    I --> J[Trigger WF-04<br/>Flujo Observaciones]
+    J --> K((Fin))
     
-    B -->|Parcial| I[Mostrar Opción<br/>Aceptar/Rechazar Sugerencias]
-    I --> J{¿Acepta<br/>Sugerencias?}
-    J -->|Sí| K[Aplicar Cambios<br/>Sugeridos]
-    K --> C
-    J -->|No| C
+    B -->|Parcial| L[Incrementar Contador<br/>Ciclos Sugerencias]
+    L --> M{¿Ciclos > 2?}
+    M -->|Sí| N[Aprobar<br/>Automáticamente]
+    N --> C
+    M -->|No| O[Mostrar Opción<br/>Aceptar/Rechazar Sugerencias]
+    O --> P{¿Acepta<br/>Sugerencias?}
+    P -->|Sí| Q[Aplicar Cambios<br/>Sugeridos]
+    Q --> C
+    P -->|No| C
 ```
+
+**Reglas de negocio:**
+- Máximo **2 ciclos** de sugerencias/observaciones
+- Al tercer intento, el documento se **aprueba automáticamente**
+- El contador se almacena en el campo `intentos_correccion` de AirTable
 
 ### 5.7 WF-06: Asignación Automática de Responsable
 
@@ -902,7 +1112,7 @@ flowchart TD
     A[Trigger: Form<br/>Validación Abastecimiento] --> B{¿Requerimiento<br/>Conforme?}
     
     B -->|Sí| C[Actualizar Estado<br/>a Validado]
-    C --> D{Monto < 1 UIT?}
+    C --> D{Monto < 1 UIT<br/>S/ 5,500?}
     
     D -->|Sí| E[Configurar para<br/>1 Proveedor]
     D -->|No| F[Configurar para<br/>≥2 Proveedores]
@@ -916,8 +1126,12 @@ flowchart TD
     J --> K[Esperar Corrección<br/>del Área Usuaria]
     K --> L{¿Corrección<br/>Recibida?}
     L -->|Sí| A
-    L -->|Timeout| M[Escalar a<br/>Supervisor]
+    L -->|Timeout 2 días| M[Escalar a<br/>Supervisor]
 ```
+
+**Reglas de negocio:**
+- Timeout de **2 días** para esperar corrección del área usuaria
+- Si no hay respuesta en 2 días, se escala a supervisor
 
 ### 5.9 WF-08: Envío a Proveedores
 
@@ -927,30 +1141,151 @@ flowchart TD
 flowchart TD
     A[Trigger: Webhook<br/>Iniciar Cotización] --> B[Obtener Datos<br/>del Requerimiento]
     
-    B --> C{¿Proveedores<br/>Pre-seleccionados?}
+    B --> C[Obtener Proveedores<br/>indicados por Área Usuaria]
     
-    C -->|Sí| D[Usar Proveedores<br/>Indicados]
-    C -->|No| E[Obtener Proveedores<br/>del Rubro]
+    C --> D{¿Abastecimiento<br/>agrega más?}
+    D -->|Sí| E[Agregar Proveedores<br/>Adicionales]
+    D -->|No| F{Validar Cantidad<br/>de Proveedores}
+    E --> F
     
-    E --> F{Monto < 1 UIT?}
-    F -->|Sí| G[Seleccionar<br/>1 Proveedor]
-    F -->|No| H[Seleccionar<br/>≥2 Proveedores]
+    F --> G{Monto < 1 UIT<br/>S/ 5,500?}
+    G -->|Sí| H{¿Tiene al menos<br/>1 proveedor?}
+    G -->|No| I{¿Tiene al menos<br/>2 proveedores?}
     
-    D --> I[Loop: Por cada Proveedor]
-    G --> I
-    H --> I
+    H -->|No| J[Notificar Error<br/>Faltan Proveedores]
+    H -->|Sí| K[Verificar Existencia<br/>de Correos]
     
-    I --> J[Generar Token<br/>Único]
-    J --> K[Crear Registro<br/>en Cotizaciones]
-    K --> L[Generar Link<br/>de Formulario]
-    L --> M[Preparar Documentos<br/>Adjuntos]
-    M --> N[Enviar Correo<br/>al Proveedor]
-    N --> O{¿Más<br/>Proveedores?}
+    I -->|No| J
+    I -->|Sí| K
     
-    O -->|Sí| I
-    O -->|No| P[Actualizar Estado<br/>Requerimiento]
-    P --> Q[Programar<br/>Recordatorios]
-    Q --> R((Fin))
+    J --> L((Fin - Error))
+    
+    K --> M{¿Todos los correos<br/>son válidos?}
+    M -->|No| N[Notificar Correos<br/>Inválidos a Abastecimiento]
+    N --> O[Esperar Corrección<br/>de Correos]
+    O --> K
+    
+    M -->|Sí| P[Loop: Por cada Proveedor]
+    
+    P --> Q{¿Proveedor existe<br/>en BD?}
+    Q -->|No| R[Crear Proveedor<br/>en AirTable]
+    Q -->|Sí| S[Obtener Datos<br/>del Proveedor]
+    R --> S
+    
+    S --> T[Generar Token<br/>Único]
+    T --> U[Crear Registro<br/>en Cotizaciones]
+    U --> V[Generar Link<br/>de Formulario]
+    V --> W[Preparar Documentos<br/>Adjuntos]
+    W --> X[Enviar Correo<br/>al Proveedor]
+    X --> Y{¿Más<br/>Proveedores?}
+    
+    Y -->|Sí| P
+    Y -->|No| Z[Actualizar Estado<br/>Requerimiento]
+    Z --> AA[Programar<br/>Recordatorios]
+    AA --> AB((Fin))
+```
+
+**Verificación de correos electrónicos:**
+
+```javascript
+// Verificar existencia de correos antes de enviar TDR/EETT
+async function verificarCorreosProveedores(proveedores) {
+    const resultados = [];
+    
+    for (const proveedor of proveedores) {
+        const email = proveedor.email_contacto;
+        
+        // 1. Validar formato de email
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            resultados.push({
+                proveedor: proveedor.razon_social,
+                email: email,
+                valido: false,
+                error: 'Formato de correo inválido'
+            });
+            continue;
+        }
+        
+        // 2. Verificar dominio MX (opcional pero recomendado)
+        try {
+            const dominio = email.split('@')[1];
+            const mxRecords = await dns.resolveMx(dominio);
+            if (mxRecords.length === 0) {
+                resultados.push({
+                    proveedor: proveedor.razon_social,
+                    email: email,
+                    valido: false,
+                    error: 'El dominio no tiene servidor de correo'
+                });
+                continue;
+            }
+        } catch (error) {
+            resultados.push({
+                proveedor: proveedor.razon_social,
+                email: email,
+                valido: false,
+                error: 'No se pudo verificar el dominio'
+            });
+            continue;
+        }
+        
+        resultados.push({
+            proveedor: proveedor.razon_social,
+            email: email,
+            valido: true
+        });
+    }
+    
+    return {
+        todosValidos: resultados.every(r => r.valido),
+        resultados: resultados,
+        invalidos: resultados.filter(r => !r.valido)
+    };
+}
+```
+
+**Lógica de validación de proveedores:**
+
+```javascript
+// Validar cantidad de proveedores según monto
+function validarProveedores(requerimiento, proveedores) {
+    const UIT_2025 = 5500;
+    const montoMenor1UIT = requerimiento.monto_estimado < UIT_2025;
+    const cantidadMinima = montoMenor1UIT ? 1 : 2;
+    
+    if (proveedores.length < cantidadMinima) {
+        return {
+            valido: false,
+            error: `Se requieren al menos ${cantidadMinima} proveedor(es) para este monto`,
+            cantidadActual: proveedores.length,
+            cantidadRequerida: cantidadMinima
+        };
+    }
+    
+    return { valido: true };
+}
+
+// Procesar proveedor (nuevo o existente)
+async function procesarProveedor(proveedor) {
+    // Buscar si ya existe por RUC o email
+    const existente = await airtable.findRecord('Proveedores', {
+        filterByFormula: `OR({ruc} = '${proveedor.ruc}', {email_contacto} = '${proveedor.email}')`
+    });
+    
+    if (existente) {
+        return existente;
+    }
+    
+    // Crear nuevo proveedor
+    return await airtable.createRecord('Proveedores', {
+        ruc: proveedor.ruc || '',
+        razon_social: proveedor.razon_social || proveedor.nombre,
+        email_contacto: proveedor.email,
+        telefono: proveedor.telefono || '',
+        origen: 'Área Usuaria'
+    });
+}
 ```
 
 **Estructura del Token:**
@@ -1081,7 +1416,7 @@ flowchart TD
     H --> I[Volver a WF-10<br/>para Validación]
     I --> J((Fin))
     
-    G -->|Timeout 3 días| K[Enviar<br/>Recordatorio]
+    G -->|Timeout 1 día| K[Enviar<br/>Recordatorio Diario]
     K --> L{¿Intentos < 3?}
     
     L -->|Sí| F
@@ -1089,6 +1424,11 @@ flowchart TD
     M --> N[Notificar a<br/>Abastecimiento]
     N --> J
 ```
+
+**Reglas de negocio:**
+- Timeout de **1 día** para enviar recordatorio
+- Recordatorio **diario** hasta que responda o se alcance máximo de intentos
+- Máximo **3 intentos** de recordatorio antes de marcar como sin respuesta
 
 ### 5.13 WF-12: Cierre y Notificación Final
 
@@ -1127,7 +1467,9 @@ flowchart TD
 
 ## 6. Formularios
 
-### 6.1 Formulario: Nuevo Requerimiento (Área Usuaria)
+### 6.1 Formulario: Nuevo Requerimiento (Área Usuaria) - Formulario Inicial
+
+Este formulario solo recoge los datos mínimos para iniciar el proceso. Los campos completos del TDR/EETT se completan en un formulario posterior (WF-02/WF-03).
 
 ```yaml
 Formulario: nuevo_requerimiento
@@ -1136,61 +1478,29 @@ Autenticación: No requerida (público interno)
 
 Campos:
   - nombre: tipo_requerimiento
+    etiqueta: "Tipo de Requerimiento"
     tipo: select
     opciones: [Servicio, Bienes, Locación de Servicios]
     requerido: true
-    
-  - nombre: area_solicitante
-    tipo: select
-    fuente: AirTable.Areas
-    requerido: true
-    
-  - nombre: nombre_solicitante
-    tipo: text
-    requerido: true
-    
-  - nombre: email_solicitante
-    tipo: email
-    requerido: true
-    
-  - nombre: telefono_solicitante
-    tipo: tel
-    requerido: false
-    
-  - nombre: descripcion
-    tipo: textarea
-    placeholder: "Describa detalladamente el servicio o bien requerido"
-    requerido: true
-    max_length: 2000
-    
-  - nombre: justificacion
-    tipo: textarea
-    placeholder: "¿Por qué se necesita esta contratación?"
-    requerido: true
+    ayuda: "Seleccione el tipo de contratación"
     
   - nombre: monto_estimado
+    etiqueta: "Monto Estimado"
     tipo: currency
     moneda: PEN
     requerido: true
-    validacion: max=51500
-    
-  - nombre: fecha_requerida
-    tipo: date
-    min: today + 7 días
-    requerido: true
-    
-  - nombre: especificaciones_adicionales
-    tipo: file
-    accept: .pdf,.doc,.docx,.xls,.xlsx
-    multiple: true
-    requerido: false
-    
-  - nombre: proveedores_sugeridos
-    tipo: email
-    multiple: true
-    requerido: false
-    ayuda: "Ingrese correos de proveedores que conozca (opcional)"
+    validacion: max=44000
+    ayuda: "Monto máximo: S/ 44,000 (8 UIT)"
+
+Validaciones_formulario:
+  - tipo: range
+    campo: monto_estimado
+    min: 1
+    max: 44000
+    mensaje: "El monto debe estar entre S/ 1 y S/ 44,000 (8 UIT)"
 ```
+
+**Nota:** Los demás campos (área solicitante, proveedores, campos del TDR/EETT) se completan en el formulario de generación de documento que se envía posteriormente al área usuaria.
 
 ### 6.2 Formulario: Revisión de Documento (Área Usuaria)
 
@@ -1233,44 +1543,118 @@ Formulario: validacion_abastecimiento
 URL: /form/validar/{token}
 Autenticación: Token único + verificación de responsable
 
-Campos:
-  - nombre: requerimiento_info
+Secciones:
+  - seccion: info_requerimiento
+    titulo: "Información del Requerimiento"
     tipo: readonly
-    campos_mostrar: [codigo, tipo, descripcion, monto, area]
-    
-  - nombre: documento_adjunto
-    tipo: readonly
-    fuente: S3.documento
-    
-  - nombre: decision
-    tipo: radio
-    opciones:
-      - value: conforme
-        label: "Requerimiento Conforme - Proceder a cotización"
-      - value: observaciones
-        label: "Requiere subsanación"
-    requerido: true
-    
-  - nombre: observaciones
-    tipo: textarea
-    visible_si: decision == 'observaciones'
-    requerido_si: decision == 'observaciones'
-    
-  - nombre: proveedores_seleccionados
-    tipo: multiselect
-    fuente: AirTable.Proveedores
-    filtro: rubros contiene tipo_requerimiento
-    visible_si: decision == 'conforme'
-    min_seleccion: dinamico según monto
-    
-  - nombre: agregar_proveedor_nuevo
-    tipo: group
+    campos:
+      - codigo
+      - tipo
+      - descripcion
+      - monto_estimado
+      - area_solicitante
+      - fecha_limite
+      
+  - seccion: documento
+    titulo: "Documento TDR/EETT"
+    campos:
+      - nombre: documento_adjunto
+        tipo: file_preview
+        fuente: S3.documento
+        
+  - seccion: decision_validacion
+    titulo: "Validación del Requerimiento"
+    campos:
+      - nombre: decision
+        tipo: radio
+        opciones:
+          - value: conforme
+            label: "Requerimiento Conforme - Proceder a cotización"
+          - value: observaciones
+            label: "Requiere subsanación por parte del Área Usuaria"
+        requerido: true
+        
+      - nombre: observaciones
+        etiqueta: "Detalle de Observaciones"
+        tipo: textarea
+        visible_si: decision == 'observaciones'
+        requerido_si: decision == 'observaciones'
+        
+  - seccion: proveedores
+    titulo: "Proveedores para Cotización"
     visible_si: decision == 'conforme'
     campos:
-      - nombre: email_nuevo_proveedor
-        tipo: email
-      - nombre: razon_social_nuevo
-        tipo: text
+      - nombre: proveedores_area_usuaria
+        etiqueta: "Proveedores indicados por el Área Usuaria"
+        tipo: readonly_list
+        fuente: AirTable.Proveedores_Requerimiento
+        campos_mostrar:
+          - proveedor.razon_social
+          - proveedor.ruc
+          - proveedor.email_contacto
+          - origen
+          
+      - nombre: validacion_cantidad
+        tipo: alert
+        estilo: warning
+        visible_si: cantidad_proveedores < minimo_requerido
+        mensaje: "Se requieren al menos {{minimo_requerido}} proveedor(es). Actualmente hay {{cantidad_proveedores}}."
+        
+      - nombre: agregar_mas_proveedores
+        etiqueta: "¿Desea agregar proveedores adicionales?"
+        tipo: checkbox
+        default: false
+        
+      - nombre: proveedores_adicionales_bd
+        etiqueta: "Agregar de la Base de Datos"
+        tipo: multiselect_searchable
+        fuente: AirTable.Proveedores
+        excluir: proveedores_area_usuaria
+        visible_si: agregar_mas_proveedores == true
+        campos_busqueda: [razon_social, ruc, email_contacto]
+        
+      - nombre: proveedores_adicionales_nuevos
+        etiqueta: "Agregar Proveedores Nuevos"
+        tipo: repeater
+        visible_si: agregar_mas_proveedores == true
+        min: 0
+        max: 3
+        campos:
+          - nombre: razon_social
+            tipo: text
+            requerido: true
+          - nombre: ruc
+            tipo: text
+            requerido: false
+          - nombre: email
+            tipo: email
+            requerido: true
+          - nombre: telefono
+            tipo: tel
+            requerido: false
+            
+  - seccion: confirmacion
+    titulo: "Confirmación"
+    visible_si: decision == 'conforme'
+    campos:
+      - nombre: resumen_proveedores
+        tipo: summary
+        contenido: |
+          Se enviará invitación a cotizar a {{total_proveedores}} proveedor(es):
+          {{lista_proveedores}}
+          
+      - nombre: confirmar_envio
+        tipo: checkbox
+        label: "Confirmo que los datos son correctos y autorizo el envío de invitaciones"
+        requerido: true
+
+Validaciones_formulario:
+  - tipo: custom
+    mensaje: "La cantidad de proveedores no cumple el mínimo requerido"
+    condicion: |
+      IF decision == 'conforme' THEN
+        total_proveedores >= minimo_requerido
+      END
 ```
 
 ### 6.4 Formulario: Propuesta del Proveedor
@@ -1479,7 +1863,11 @@ Sistema de Contrataciones
 ### 7.4 Invitación a Cotizar (Proveedor)
 
 ```html
-Asunto: Invitación a Cotizar - {{codigo_requerimiento}}
+Asunto: Invitación a Cotizar - {{codigo_requerimiento}} {{denominacion_contratacion}}
+
+La Subgerencia de Abastecimientos como Dependencia Encargada de las Contrataciones, 
+invita a las personas naturales y/o jurídicas a formular y presentar su cotización 
+según Términos de Referencia adjunto.
 
 Estimados Señores,
 {{razon_social}}
@@ -1493,7 +1881,6 @@ DATOS DEL PROCESO
 Código: {{codigo_requerimiento}}
 Objeto: {{descripcion_corta}}
 Tipo: {{tipo_contratacion}}
-Valor Referencial: S/ {{monto_estimado}}
 
 FECHA LÍMITE DE PRESENTACIÓN: {{fecha_limite}}
 
@@ -1517,6 +1904,26 @@ DOCUMENTOS REQUERIDOS
 {{#if obligatorio}}✅{{else}}⬜{{/if}} {{nombre}} {{#if obligatorio}}(Obligatorio){{else}}(Opcional){{/if}}
 {{/each}}
 
+Los documentos requeridos son:
+
+📋 Cotización o proforma o propuesta económica, deberá contener como mínimo 
+   la siguiente información:
+   • Nº de Cotización o proforma
+   • RUC
+   • Razón social
+   • Domicilio fiscal
+   • Firma del representante legal
+   • Teléfono fijo y/o móvil, correo electrónico
+   • Estructura de costos (de ser el caso)
+   • CCI
+
+📎 Adjuntar:
+   • FICHA RUC
+   • RNP (de corresponder)
+
+📝 Así mismo deberá presentar los siguientes formatos adjuntos al presente correo:
+   • F012 - DJ SERVICIOS
+
 ═══════════════════════════════════════════
 
 IMPORTANTE:
@@ -1524,8 +1931,14 @@ IMPORTANTE:
 • Asegúrese de cargar todos los documentos obligatorios
 • Las propuestas incompletas podrán ser observadas
 
+La presentación de la documentación se podrá realizar vía correo electrónico:
+📧 cotizaciones03cajabamba@gmail.com 
+o en la Sub Gerencia de Abastecimientos.
+
 Atentamente,
-Área de Abastecimiento
+
+SUB GERENTE DE ABASTECIMIENTOS
+MUNICIPALIDAD PROVINCIAL DE CAJABAMBA
 ```
 
 ### 7.5 Confirmación de Propuesta Recibida
@@ -2291,10 +2704,10 @@ gantt
 
 | Concepto | Valor |
 |----------|-------|
-| 1 UIT | S/ 5,150 |
-| 8 UIT (límite proceso) | S/ 41,200 |
-| Contratación < 1 UIT | S/ 5,149.99 (1 proveedor) |
-| Contratación ≥ 1 UIT | S/ 5,150 a S/ 41,200 (≥2 proveedores) |
+| 1 UIT | S/ 5,500 |
+| 8 UIT (límite proceso) | S/ 44,000 |
+| Contratación < 1 UIT | S/ 5,499.99 (1 proveedor) |
+| Contratación ≥ 1 UIT | S/ 5,500 a S/ 44,000 (≥2 proveedores) |
 
 ### 11.3 Contactos de Soporte
 
