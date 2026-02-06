@@ -17,8 +17,9 @@
 5. [Formularios](#5-formularios)
 6. [Plantillas de Correo](#6-plantillas-de-correo)
 7. [Reglas de Negocio](#7-reglas-de-negocio)
-8. [Cronograma de Implementación](#8-cronograma-de-implementación)
-9. [Anexos](#9-anexos)
+8. [Costos del Proyecto](#8-costos-del-proyecto)
+9. [Cronograma de Implementación](#9-cronograma-de-implementación)
+10. [Anexos](#10-anexos)
 
 ---
 
@@ -1172,9 +1173,97 @@ Si algún correo no es válido, se notifica a Abastecimiento para corrección.
 
 ---
 
-## 8. Cronograma de Implementación
+## 8. Costos del Proyecto
 
-### 8.1 Fases del Proyecto
+### 8.1 Costos de Infraestructura (Mensual)
+
+**Opción A: VPS (Recomendada)**
+
+| Componente | Especificación | Costo Mensual |
+|------------|----------------|---------------|
+| Servidor VPS (Hetzner/Contabo) | 4 vCPU, 8GB RAM, 200GB SSD | $20 - $30 |
+| Dominio | .gob.pe o similar | ~$2 |
+| **Total Mensual** | | **$22 - $32** |
+| **Total Anual** | | **$264 - $384** |
+
+**Opción B: AWS (Mayor escalabilidad)**
+
+| Componente | Especificación | Costo Mensual |
+|------------|----------------|---------------|
+| EC2 (t3.medium) | 2 vCPU, 4GB RAM | ~$30 |
+| RDS PostgreSQL | db.t3.micro | ~$15 |
+| S3 Storage | ~12 GB/año documentos | ~$3 |
+| SES (Correos) | ~1,900 correos/mes pico | ~$2 |
+| CloudWatch | Monitoreo básico | ~$5 |
+| **Total Mensual** | | **$55 - $70** |
+| **Total Anual** | | **$660 - $840** |
+
+### 8.2 Costos de Licencias
+
+| Servicio | Plan | Costo |
+|----------|------|-------|
+| **n8n** | Self-hosted (código abierto) | **Gratis** |
+| **AirTable** | Team (hasta 50,000 registros) | $20/usuario/mes |
+| | Estimado 5 usuarios | $100/mes |
+| **Google Workspace** | Para Google Docs API | $6/usuario/mes (si no tienen) |
+
+**Alternativa AirTable:** Si el volumen crece, migrar a PostgreSQL (incluido en VPS) = $0 adicional
+
+### 8.3 Costos de Implementación (Único)
+
+| Concepto | Descripción | Costo Estimado |
+|----------|-------------|----------------|
+| Desarrollo e integración | Configuración de n8n, AirTable, plantillas | $3,000 - $5,000 |
+| Migración de datos | Carga de proveedores existentes | $500 - $1,000 |
+| Capacitación | 3 sesiones (Área Usuaria, Abastecimiento, Supervisores) | $500 - $800 |
+| Documentación | Manuales de usuario | $300 - $500 |
+| **Total Implementación** | | **$4,300 - $7,300** |
+
+### 8.4 Costos de Mantenimiento (Anual)
+
+| Concepto | Descripción | Costo Anual |
+|----------|-------------|-------------|
+| Soporte técnico | Corrección de errores, actualizaciones | $1,200 - $2,400 |
+| Mejoras menores | Ajustes a flujos, nuevos reportes | $600 - $1,200 |
+| Backups y seguridad | Monitoreo y respaldos | Incluido en infraestructura |
+| **Total Mantenimiento** | | **$1,800 - $3,600** |
+
+### 8.5 Resumen de Costos
+
+**Primer Año (Implementación + Operación):**
+
+| Concepto | Opción VPS | Opción AWS |
+|----------|------------|------------|
+| Implementación (único) | $4,300 - $7,300 | $4,300 - $7,300 |
+| Infraestructura (12 meses) | $264 - $384 | $660 - $840 |
+| AirTable (12 meses) | $1,200 | $1,200 |
+| **Total Año 1** | **$5,764 - $8,884** | **$6,160 - $9,340** |
+
+**Años Siguientes (Solo Operación):**
+
+| Concepto | Opción VPS | Opción AWS |
+|----------|------------|------------|
+| Infraestructura | $264 - $384 | $660 - $840 |
+| AirTable | $1,200 | $1,200 |
+| Mantenimiento | $1,800 - $3,600 | $1,800 - $3,600 |
+| **Total Anual** | **$3,264 - $5,184** | **$3,660 - $5,640** |
+
+### 8.6 Retorno de Inversión (ROI)
+
+| Beneficio | Ahorro Estimado |
+|-----------|-----------------|
+| Reducción de tiempo administrativo (60%) | ~200 horas/mes |
+| Eliminación de errores de transcripción | Incuantificable |
+| Reducción de papel y almacenamiento | ~$100/mes |
+| Mejor control y auditoría | Reducción de riesgos |
+
+**Tiempo estimado de recuperación:** 6-8 meses considerando eficiencias operativas.
+
+---
+
+## 9. Cronograma de Implementación
+
+### 9.1 Fases del Proyecto
 
 ```mermaid
 gantt
@@ -1205,7 +1294,7 @@ gantt
     Piloto y Go-live            :f2, after f1, 1w
 ```
 
-### 8.2 Resumen por Semanas
+### 9.2 Resumen por Semanas
 
 | Semana | Actividades |
 |--------|-------------|
@@ -1216,7 +1305,7 @@ gantt
 | 9-10 | Pruebas integrales y corrección de errores |
 | 11-12 | Capacitación a usuarios y puesta en producción |
 
-### 8.3 Capacitación Requerida
+### 9.3 Capacitación Requerida
 
 | Grupo | Duración | Temas |
 |-------|----------|-------|
@@ -1226,9 +1315,9 @@ gantt
 
 ---
 
-## 9. Anexos
+## 10. Anexos
 
-### 9.1 Glosario de Términos
+### 10.1 Glosario de Términos
 
 | Término | Definición |
 |---------|------------|
@@ -1241,7 +1330,7 @@ gantt
 | **n8n** | Plataforma de automatización de procesos |
 | **AirTable** | Base de datos en la nube |
 
-### 9.2 Valores de Referencia 2025
+### 10.2 Valores de Referencia 2025
 
 | Concepto | Valor |
 |----------|-------|
@@ -1250,7 +1339,7 @@ gantt
 | Contratación < 1 UIT | S/ 5,499.99 (1 proveedor mínimo) |
 | Contratación ≥ 1 UIT | S/ 5,500 a S/ 44,000 (2+ proveedores) |
 
-### 9.3 Cuadro Comparativo de Propuestas (Ejemplo)
+### 10.3 Cuadro Comparativo de Propuestas (Ejemplo)
 
 | Criterio | Proveedor A | Proveedor B | Proveedor C |
 |----------|-------------|-------------|-------------|
